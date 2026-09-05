@@ -9,7 +9,7 @@ COPY carolina ./carolina
 COPY main.pony ./
 RUN corral fetch \
  && mkdir -p /out \
- && corral run -- ponyc --path=. -Dopenssl_3.0.x -o /out .
+ && corral run -- ponyc --path=. -Dopenssl_3.0.x --bin-name pony -o /out .
 
 FROM debian:bookworm-slim
 RUN apt-get update \

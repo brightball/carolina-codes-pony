@@ -11,6 +11,7 @@ Community pattern (tutorial.ponylang.io/testing/ponytest):
 """
 
 use "pony_test"
+use "files"
 use json = "json"
 use carolina = "carolina"
 
@@ -34,6 +35,7 @@ actor Main is TestList
     test(_TestYearsWrappedAsData)
     test(_TestTrailingSlashHealth)
     test(_TestFakeCatalogDoesNotConnect)
+    test(_TestDockerfileBinName)
 
 class iso _TestStructureIdentity is UnitTest
   fun name(): String => "carolina/structure/identity-primitive"
@@ -201,6 +203,41 @@ class iso _TestFakeCatalogDoesNotConnect is UnitTest
     (let status, let body) = carolina.Handler("/health", None, cat)
     h.assert_eq[U16](200, status)
     h.assert_eq[USize](0, cat.connect_count())
+
+class iso _TestDockerfileBinName is UnitTest
+  """
+  ponyc names the binary after the package directory unless --bin-name is set.
+  WORKDIR /src would otherwise emit /out/src, which COPY /out/pony would miss.
+  """
+  fun name(): String => "carolina/structure/dockerfile-bin-name"
+
+  fun apply(h: TestHelper) =>
+    let body = _read_dockerfile(h)
+    h.assert_true(_Has(body, "--bin-name pony"),
+      "Dockerfile must pass --bin-name pony so WORKDIR /src still emits /out/pony")
+    h.assert_true(_Has(body, "COPY --from=build /out/pony "),
+      "Dockerfile COPY must use /out/pony, the --bin-name output")
+    h.assert_false(_Has(body, "/out/src"),
+      "Dockerfile must not COPY /out/src")
+
+  fun _read_dockerfile(h: TestHelper): String val =>
+    let candidates: Array[String val] val =
+      recover val
+        Array[String val]
+          .> push("Dockerfile")
+          .> push("../Dockerfile")
+      end
+    for rel in candidates.values() do
+      let path = FilePath(FileAuth(h.env.root), rel)
+      let file = recover ref File.open(path) end
+      if file.errno() is FileOK then
+        let s: String val = file.read_string(file.size())
+        file.dispose()
+        return s
+      end
+    end
+    h.fail("Dockerfile not found from cwd")
+    ""
 
 primitive _Has
   fun apply(hay: String val, needle: String val): Bool =>

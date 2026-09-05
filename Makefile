@@ -13,7 +13,7 @@ fetch:
 
 $(BIN_DIR)/pony: fetch
 	mkdir -p $(BIN_DIR)
-	$(CORRAL) run -- $(PONYC) --path=. -D$(SSL_DEFINE) -o $(BIN_DIR) .
+	$(CORRAL) run -- $(PONYC) --path=. -D$(SSL_DEFINE) --bin-name pony -o $(BIN_DIR) .
 
 $(TEST_DIR)/test: fetch
 	mkdir -p $(TEST_DIR)

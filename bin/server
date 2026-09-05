@@ -6,6 +6,6 @@ BIN="$ROOT/build/carolina-codes-pony/pony"
 export PATH="${HOME}/.local/share/ponyup/bin:${PATH}"
 if [[ ! -x "$BIN" ]]; then
   mkdir -p "$ROOT/build/carolina-codes-pony"
-  (cd "$ROOT" && corral fetch && corral run -- ponyc --path=. -Dopenssl_3.0.x -o "$ROOT/build/carolina-codes-pony" .)
+  (cd "$ROOT" && corral fetch && corral run -- ponyc --path=. -Dopenssl_3.0.x --bin-name pony -o "$ROOT/build/carolina-codes-pony" .)
 fi
 exec "$BIN"
