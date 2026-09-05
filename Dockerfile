@@ -1,8 +1,7 @@
 FROM ghcr.io/ponylang/ponyc:release AS build
 USER root
-RUN apt-get update \
- && apt-get install -y --no-install-recommends libssl-dev libpq-dev git ca-certificates \
- && rm -rf /var/lib/apt/lists/*
+# ponyc:release is Alpine; musl binary must stay on Alpine at runtime.
+RUN apk add --no-cache openssl-dev libpq-dev git ca-certificates
 WORKDIR /src
 COPY corral.json lock.json ./
 COPY carolina ./carolina
@@ -11,10 +10,8 @@ RUN corral fetch \
  && mkdir -p /out \
  && corral run -- ponyc --path=. -Dopenssl_3.0.x --bin-name pony -o /out .
 
-FROM debian:bookworm-slim
-RUN apt-get update \
- && apt-get install -y --no-install-recommends libssl3 libpq5 \
- && rm -rf /var/lib/apt/lists/*
+FROM alpine:3.24
+RUN apk add --no-cache libssl3 libpq ca-certificates
 COPY --from=build /out/pony /usr/local/bin/carolina-codes-pony
 ENV PORT=8080
 EXPOSE 8080
