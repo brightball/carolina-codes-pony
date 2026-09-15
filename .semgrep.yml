@@ -1,0 +1,20 @@
+# Local Semgrep rules so SAST actually inspects this app's .pony sources.
+# Pony has no language-specific ruleset; generic patterns still scan the tree.
+rules:
+  - id: pony-libpq-unparameterized-exec
+    message: Use PQexecParams with bound arguments instead of interpolating SQL into PQexec.
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "*.pony"
+    pattern: "@PQexec["
+
+  - id: pony-hardcoded-aws-access-key
+    message: Possible hardcoded AWS access key in Pony source.
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include:
+        - "*.pony"
+    pattern-regex: "AKIA[0-9A-Z]{16}"

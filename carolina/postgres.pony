@@ -10,6 +10,7 @@ use @PQconnectdb[Pointer[_PGconn]](conninfo: Pointer[U8] tag)
 use @PQstatus[I32](conn: Pointer[_PGconn] tag)
 use @PQfinish[None](conn: Pointer[_PGconn] tag)
 use @PQerrorMessage[Pointer[U8]](conn: Pointer[_PGconn] tag)
+// pony-lint: off style/member-naming
 use @PQexecParams[Pointer[_PGresult]](
   conn: Pointer[_PGconn] tag,
   command: Pointer[U8] tag,
@@ -19,6 +20,7 @@ use @PQexecParams[Pointer[_PGresult]](
   paramLengths: Pointer[I32] tag,
   paramFormats: Pointer[I32] tag,
   resultFormat: I32)
+// pony-lint: on style/member-naming
 use @PQresultStatus[I32](res: Pointer[_PGresult] tag)
 use @PQclear[None](res: Pointer[_PGresult] tag)
 use @PQntuples[I32](res: Pointer[_PGresult] tag)
@@ -43,7 +45,9 @@ primitive PqStr
     end
 
 primitive PqRead
-  """Extract rows from a PGresult. Primitive so we do not capture a Catalog `ref`."""
+  """
+  Extract rows from a PGresult. Primitive so we do not capture a Catalog `ref`.
+  """
   fun rows(res: Pointer[_PGresult] tag): Array[Row val] val =>
     let out = recover iso Array[Row val] end
     let nt = @PQntuples(res)
@@ -94,11 +98,25 @@ class PqCatalog is Catalog
     end
     let res =
       if n == 0 then
-        @PQexecParams(_conn, sql.cstring(), 0,
-          Pointer[U32], Pointer[Pointer[U8] tag], Pointer[I32], Pointer[I32], 0)
+        @PQexecParams(
+          _conn,
+          sql.cstring(),
+          0,
+          Pointer[U32],
+          Pointer[Pointer[U8] tag],
+          Pointer[I32],
+          Pointer[I32],
+          0)
       else
-        @PQexecParams(_conn, sql.cstring(), n,
-          Pointer[U32], values.cpointer(), Pointer[I32], Pointer[I32], 0)
+        @PQexecParams(
+          _conn,
+          sql.cstring(),
+          n,
+          Pointer[U32],
+          values.cpointer(),
+          Pointer[I32],
+          Pointer[I32],
+          0)
       end
     if res.is_null() then
       return recover val Array[Row val] end
@@ -130,7 +148,9 @@ class PqCatalog is Catalog
 
 primitive PqDsn
   fun apply(url: String val): String val =>
-    """Translate postgres://user:pass@host:port/db into libpq conninfo."""
+    """
+    Translate postgres://user:pass@host:port/db into libpq conninfo.
+    """
     var rest: String val = url
     if rest.at("postgres://", 0) then
       rest = rest.substring(11)

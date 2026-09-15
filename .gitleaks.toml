@@ -1,0 +1,12 @@
+title = "carolina-codes-pony"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Vendored corral checkouts and build artifacts are not first-party app code"
+paths = [
+  '''(^|/)_corral/''',
+  '''(^|/)_repos/''',
+  '''(^|/)build/''',
+]

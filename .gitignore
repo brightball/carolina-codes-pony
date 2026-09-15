@@ -3,3 +3,5 @@ _repos
 /build
 *.o
 .env
+osv-scanner-custom.json
+.semgrep/

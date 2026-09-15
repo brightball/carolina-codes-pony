@@ -63,8 +63,10 @@ primitive RegisterOnce
       return
     end
     (let host, let port) = _host_port(url)
-    let body: String val = json.JSONPrinter.print(
-      Identity.json_object().update("base_url", EnvUtil.public_base_url(env.vars)))
+    let body: String val =
+      json.JSONPrinter.print(
+        Identity.json_object().update(
+          "base_url", EnvUtil.public_base_url(env.vars)))
     let req = _http_post(host, token, body)
     Registrar(lori.TCPConnectAuth(env.root), host, port, req, env.err)
 
@@ -72,15 +74,14 @@ primitive RegisterOnce
     : String val
   =>
     recover val
-      let s = String
-      s.append("POST /internal/api-endpoints/register HTTP/1.1\r\n")
-      s.append("Host: " + host + "\r\n")
-      s.append("Authorization: Bearer " + token + "\r\n")
-      s.append("Content-Type: application/json\r\n")
-      s.append("Content-Length: " + body.size().string() + "\r\n")
-      s.append("Connection: close\r\n\r\n")
-      s.append(body)
-      s
+      String
+        .> append("POST /internal/api-endpoints/register HTTP/1.1\r\n")
+        .> append("Host: " + host + "\r\n")
+        .> append("Authorization: Bearer " + token + "\r\n")
+        .> append("Content-Type: application/json\r\n")
+        .> append("Content-Length: " + body.size().string() + "\r\n")
+        .> append("Connection: close\r\n\r\n")
+        .> append(body)
     end
 
   fun _host_port(url: String val): (String val, String val) =>

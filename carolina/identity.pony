@@ -1,8 +1,3 @@
-"""
-Carolina Code Conference polyglot API library: Stallion HTTP shell over
-capability-safe catalog functions (SQL against Postgres v1_* views).
-"""
-
 // Identity for the Pony + Stallion polyglot sibling.
 //
 // All values are `val` so they can be sent between actors (Main → Registrar,

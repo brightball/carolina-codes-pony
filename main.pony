@@ -1,8 +1,4 @@
-"""
-Carolina Code Conference polyglot API — Pony + Stallion.
-
-Register once, then listen. Catalog SQL stays inside each connection actor.
-"""
+// Register once, then listen. Catalog SQL stays inside each connection actor.
 
 use lori = "lori"
 use carolina = "carolina"

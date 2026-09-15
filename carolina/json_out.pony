@@ -20,7 +20,9 @@ primitive JsonOut
     wrap_data(arr)
 
   fun pg_text_array(raw: String val): json.JSONArray val =>
-    """Turn a Postgres text[] literal `{a,b}` into a JSON array."""
+    """
+    Turn a Postgres text[] literal `{a,b}` into a JSON array.
+    """
     var arr = json.JSONArray
     if (raw.size() == 0) or (raw == "{}") then
       return arr
@@ -35,7 +37,7 @@ primitive JsonOut
       return arr
     end
     for part in s.split(",").values() do
-      var p: String val = part.clone().>strip()
+      var p: String val = part.clone() .> strip()
       try
         if (p.size() >= 2) and (p(0)? == '"') and (p(p.size() - 1)? == '"') then
           p = p.substring(1, (p.size() - 1).isize())

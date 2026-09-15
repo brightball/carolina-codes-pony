@@ -29,7 +29,9 @@ class val Row
     _pairs
 
 primitive RowBuild
-  """Mutable builder that recovers a `Row val`."""
+  """
+  Mutable builder that recovers a `Row val`.
+  """
   fun pair(key: String val, value: String val): (String val, String val) =>
     (key, value)
 

@@ -1,0 +1,6 @@
+# Vendored corral, build output, and Cursor Cloud agent images are not
+# first-party application code for SAST.
+_corral/
+_repos/
+build/
+.cursor/

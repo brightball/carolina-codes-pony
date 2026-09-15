@@ -7,7 +7,9 @@
 use json = "json"
 
 interface Catalog
-  """Read-only SQL against v1_* views. Never Ash tables."""
+  """
+  Read-only SQL against v1_* views. Never Ash tables.
+  """
   fun ref query(sql: String val, args: Array[String val] val): Array[Row val] val
   fun sql_count(): USize
   fun connect_count(): USize
@@ -35,7 +37,9 @@ primitive Sql
     recover val Array[String val](2) .> push(a) .> push(b) end
 
 primitive CatalogFns
-  """Shipped catalog operations used by Handler. Tests call these too."""
+  """
+  Shipped catalog operations used by Handler. Tests call these too.
+  """
 
   fun query_one(catalog: Catalog, sql: String val, args: Array[String val] val)
     : (Row val | None)
@@ -50,7 +54,7 @@ primitive CatalogFns
   fun talks_for(catalog: Catalog, slug: String val, year: (I64 | None))
     : Array[Row val] val
   =>
-    match year
+    match \exhaustive\ year
     | let y: I64 =>
       catalog.query(
         "SELECT " + Sql.talk_cols() +
@@ -64,15 +68,17 @@ primitive CatalogFns
     end
 
   fun talk_years(catalog: Catalog, slug: String val): Array[I64] val =>
-    let rows = catalog.query(
-      "SELECT DISTINCT year FROM v1_talks WHERE speaker_slug = $1 ORDER BY year DESC",
-      Sql.one(slug))
+    let rows =
+      catalog.query(
+        "SELECT DISTINCT year FROM v1_talks WHERE speaker_slug = $1 ORDER BY year DESC",
+        Sql.one(slug))
     _years_from(rows)
 
   fun sponsor_years(catalog: Catalog, slug: String val): Array[I64] val =>
-    let rows = catalog.query(
-      "SELECT DISTINCT year FROM v1_sponsorships WHERE sponsor_slug = $1 ORDER BY year DESC",
-      Sql.one(slug))
+    let rows =
+      catalog.query(
+        "SELECT DISTINCT year FROM v1_sponsorships WHERE sponsor_slug = $1 ORDER BY year DESC",
+        Sql.one(slug))
     _years_from(rows)
 
   fun _years_from(rows: Array[Row val] val): Array[I64] val =>
@@ -96,7 +102,7 @@ primitive CatalogFns
         end
         if s.size() > 0 then
           for part in s.split(",").values() do
-            var p: String val = part.clone().>strip()
+            var p: String val = part.clone() .> strip()
             try
               if (p.size() >= 2) and (p(0)? == '"') and
                 (p(p.size() - 1)? == '"')
@@ -120,17 +126,20 @@ primitive CatalogFns
     end
 
   fun list_speakers(catalog: Catalog, year: (I64 | None)): Array[json.JSONValue] val =>
-    match year
+    match \exhaustive\ year
     | None =>
-      let rows = catalog.query(
-        "SELECT " + Sql.speaker_cols() + " FROM v1_speakers ORDER BY last_name, first_name",
-        Sql.none_args())
+      let rows =
+        catalog.query(
+          "SELECT " + Sql.speaker_cols() +
+          " FROM v1_speakers ORDER BY last_name, first_name",
+          Sql.none_args())
       _rows_to_json(rows)
     | let y: I64 =>
-      let rows = catalog.query(
-        "SELECT " + Sql.speaker_cols() +
-        " FROM v1_speakers WHERE slug IN (SELECT speaker_slug FROM v1_talks WHERE year = $1) ORDER BY last_name, first_name",
-        Sql.one(y.string()))
+      let rows =
+        catalog.query(
+          "SELECT " + Sql.speaker_cols() +
+          " FROM v1_speakers WHERE slug IN (SELECT speaker_slug FROM v1_talks WHERE year = $1) ORDER BY last_name, first_name",
+          Sql.one(y.string()))
       _attach_year_tags(catalog, rows, y)
     end
 

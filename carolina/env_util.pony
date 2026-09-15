@@ -4,7 +4,9 @@
 // with any actor as `val`.
 
 primitive AsVal
-  """Consume an ephemeral `String iso^` (substring, `+`, `.string()`) into `val`."""
+  """
+  Consume an ephemeral `String iso^` (substring, `+`, `.string()`) into `val`.
+  """
   fun apply(s: String iso): String val =>
     consume s
 
@@ -24,7 +26,9 @@ primitive EnvUtil
     apply(vars, "PORT", "4023")
 
   fun database_url(vars: Array[String val] val): String val =>
-    apply(vars, "DATABASE_URL",
+    apply(
+      vars,
+      "DATABASE_URL",
       "postgres://postgres:postgres@127.0.0.1:5432/carolina_dev")
 
   fun carolina_url(vars: Array[String val] val): String val =>

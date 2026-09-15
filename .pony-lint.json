@@ -1,0 +1,8 @@
+{
+  "rules": {
+    "style/public-docstring": "off",
+    "style/line-length": "off",
+    "style/acronym-casing": "off",
+    "style/package-docstring": "off"
+  }
+}

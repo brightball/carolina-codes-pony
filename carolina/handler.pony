@@ -18,9 +18,10 @@ primitive Handler
       return (200, Identity.json_string())
     end
     if path == "/v1/years" then
-      let rows = catalog.query(
-        "SELECT year, slug, name, status FROM v1_years ORDER BY year DESC",
-        Sql.none_args())
+      let rows =
+        catalog.query(
+          "SELECT year, slug, name, status FROM v1_years ORDER BY year DESC",
+          Sql.none_args())
       return (200, JsonOut.wrap_array(_to_values(rows)))
     end
     if path == "/v1/speakers" then
@@ -30,15 +31,17 @@ primitive Handler
     if path == "/v1/sponsors" then
       match _year_opt(year_q)
       | let y: I64 =>
-        let rows = catalog.query(
-          "SELECT " + Sql.year_sponsor_cols() +
-          " FROM v1_year_sponsors WHERE year = $1 ORDER BY name",
-          Sql.one(y.string()))
+        let rows =
+          catalog.query(
+            "SELECT " + Sql.year_sponsor_cols() +
+            " FROM v1_year_sponsors WHERE year = $1 ORDER BY name",
+            Sql.one(y.string()))
         return (200, JsonOut.wrap_array(_to_values(rows)))
       | None =>
-        let rows = catalog.query(
-          "SELECT " + Sql.sponsor_cols() + " FROM v1_sponsors ORDER BY name",
-          Sql.none_args())
+        let rows =
+          catalog.query(
+            "SELECT " + Sql.sponsor_cols() + " FROM v1_sponsors ORDER BY name",
+            Sql.none_args())
         return (200, JsonOut.wrap_array(_to_values(rows)))
       end
     end
@@ -71,7 +74,8 @@ primitive Handler
     (404, JsonOut.not_found())
 
   fun _speaker(catalog: Catalog, slug: String val): (U16, String val) =>
-    match CatalogFns.query_one(catalog,
+    match \exhaustive\ CatalogFns.query_one(
+      catalog,
       "SELECT " + Sql.speaker_cols() + " FROM v1_speakers WHERE slug = $1",
       Sql.one(slug))
     | None => (404, JsonOut.not_found())
@@ -90,7 +94,8 @@ primitive Handler
   fun _speaker_year(catalog: Catalog, year: I64, slug: String val)
     : (U16, String val)
   =>
-    match CatalogFns.query_one(catalog,
+    match \exhaustive\ CatalogFns.query_one(
+      catalog,
       "SELECT " + Sql.speaker_cols() + " FROM v1_speakers WHERE slug = $1",
       Sql.one(slug))
     | None => (404, JsonOut.not_found())
@@ -113,23 +118,29 @@ primitive Handler
         talks_json = talks_json.push(JsonOut.row_object(t))
       end
       obj = obj.update("talks", talks_json)
-      obj = obj.update("languages",
-        JsonOut.string_array(CatalogFns.uniq_tags(talks, "languages")))
-      obj = obj.update("topics",
-        JsonOut.string_array(CatalogFns.uniq_tags(talks, "topics")))
+      obj =
+        obj.update(
+          "languages",
+          JsonOut.string_array(CatalogFns.uniq_tags(talks, "languages")))
+      obj =
+        obj.update(
+          "topics",
+          JsonOut.string_array(CatalogFns.uniq_tags(talks, "topics")))
       (200, JsonOut.wrap_data(obj))
     end
 
   fun _sponsor(catalog: Catalog, slug: String val): (U16, String val) =>
-    match CatalogFns.query_one(catalog,
+    match \exhaustive\ CatalogFns.query_one(
+      catalog,
       "SELECT " + Sql.sponsor_cols() + " FROM v1_sponsors WHERE slug = $1",
       Sql.one(slug))
     | None => (404, JsonOut.not_found())
     | let row: Row val =>
       var obj = JsonOut.row_object(row)
-      let sps = catalog.query(
-        "SELECT * FROM v1_sponsorships WHERE sponsor_slug = $1",
-        Sql.one(slug))
+      let sps =
+        catalog.query(
+          "SELECT * FROM v1_sponsorships WHERE sponsor_slug = $1",
+          Sql.one(slug))
       var arr = json.JSONArray
       for s in sps.values() do
         arr = arr.push(JsonOut.row_object(s))
@@ -141,7 +152,8 @@ primitive Handler
   fun _sponsor_year(catalog: Catalog, year: I64, slug: String val)
     : (U16, String val)
   =>
-    match CatalogFns.query_one(catalog,
+    match \exhaustive\ CatalogFns.query_one(
+      catalog,
       "SELECT " + Sql.year_sponsor_cols() +
       " FROM v1_year_sponsors WHERE year = $1 AND slug = $2",
       Sql.two(year.string(), slug))
@@ -166,7 +178,7 @@ primitive Handler
     consume out
 
   fun _year_opt(year_q: (String val | None)): (I64 | None) =>
-    match year_q
+    match \exhaustive\ year_q
     | None => None
     | let s: String val =>
       if s.size() == 0 then

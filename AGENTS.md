@@ -14,3 +14,5 @@ Postgres `v1_*` views live in the CMS database. Handler/unit tests that use a fa
 - `PUBLIC_BASE_URL` / `PORT` as in the README
 
 Do not query Ash tables. Do not fold this tree into the CMS git remote. Contract: CMS `priv/api/openapi.yaml` + `priv/api/AGENTS.md`.
+
+Quality gates: `make test`, `make sast` (Semgrep), `make audit` (osv-scanner on corral lock.json), `make gitleaks`, `make lint` (`pony-lint`). `make check` runs them locally; Gitea runs each as its own job. `make hooks` installs pre-commit.
