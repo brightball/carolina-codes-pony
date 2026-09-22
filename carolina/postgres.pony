@@ -32,9 +32,59 @@ use @PQgetisnull[I32](res: Pointer[_PGresult] tag, tup: I32, field: I32)
 struct _PGconn
 struct _PGresult
 
-primitive _Pq
+primitive PqCodes
+  """
+  libpq ConnStatusType and ExecStatusType values this process branches on.
+  """
   fun connection_ok(): I32 => 0
+  fun connection_bad(): I32 => 1
   fun tuples_ok(): I32 => 2
+  fun bad_response(): I32 => 5
+  fun fatal_error(): I32 => 7
+
+primitive PqRows
+  """Successful PGRES_TUPLES_OK row set. Zero tuples is still success."""
+
+primitive PqFailed
+  """
+  The statement failed and the result is not an empty row set.
+  The connection itself can still be reused.
+  """
+
+primitive PqDrop
+  """
+  The connection is not usable. Finish it. Do not report an empty row set.
+  The next query opens a new connection.
+  """
+
+type PqExecOutcome is (PqRows | PqFailed | PqDrop)
+
+primitive PqDecision
+  """
+  Reuse-or-finish decision `PqCatalog.query` calls. No libpq handle.
+  """
+  fun keep_connection(conn_status: I32): Bool =>
+    conn_status == PqCodes.connection_ok()
+
+  fun after_exec(
+    result_null: Bool,
+    result_status: I32,
+    conn_status: I32,
+    ntuples: I32)
+    : PqExecOutcome
+  =>
+    """
+    `ntuples` is only meaningful for PGRES_TUPLES_OK. Zero is an empty
+    success. A null result, or any status while the connection is not
+    CONNECTION_OK, drops the connection instead of looking like zero rows.
+    """
+    if result_null or not keep_connection(conn_status) then
+      PqDrop
+    elseif (result_status == PqCodes.tuples_ok()) and (ntuples >= 0) then
+      PqRows
+    else
+      PqFailed
+    end
 
 primitive PqStr
   fun apply(ptr: Pointer[U8] box): String val =>
@@ -75,7 +125,7 @@ class PqCatalog is Catalog
   var _conn: Pointer[_PGconn] = Pointer[_PGconn]
   var _sql_count: USize = 0
   var _connect_count: USize = 0
-  var _ok: Bool = false
+  var _open: Bool = false
 
   new create(database_url: String val) =>
     _dsn = PqDsn(database_url)
@@ -86,10 +136,10 @@ class PqCatalog is Catalog
   fun connect_count(): USize =>
     _connect_count
 
-  fun ref query(sql: String val, args: Array[String val] val): Array[Row val] val =>
+  fun ref query(sql: String val, args: Array[String val] val): Array[Row val] val ? =>
     _sql_count = _sql_count + 1
-    if not _ensure() then
-      return recover val Array[Row val] end
+    if not _prepare() then
+      error
     end
     let n = args.size().i32()
     let values = Array[Pointer[U8] tag](args.size())
@@ -118,32 +168,62 @@ class PqCatalog is Catalog
           Pointer[I32],
           0)
       end
-    if res.is_null() then
-      return recover val Array[Row val] end
-    end
-    if @PQresultStatus(res) != _Pq.tuples_ok() then
+    let result_null = res.is_null()
+    let result_status: I32 =
+      if result_null then I32(-1) else @PQresultStatus(res) end
+    let ntuples: I32 =
+      if result_null then I32(-1) else @PQntuples(res) end
+    let outcome =
+      PqDecision.after_exec(
+        result_null,
+        result_status,
+        @PQstatus(_conn),
+        ntuples)
+    if outcome is PqRows then
+      let rows = PqRead.rows(res)
       @PQclear(res)
-      return recover val Array[Row val] end
+      rows
+    elseif outcome is PqDrop then
+      if not result_null then @PQclear(res) end
+      _finish()
+      error
+    else
+      if not result_null then @PQclear(res) end
+      error
     end
-    let rows = PqRead.rows(res)
-    @PQclear(res)
-    rows
 
-  fun ref _ensure(): Bool =>
-    if _ok then
-      return true
+  fun ref _prepare(): Bool =>
+    if _open and not PqDecision.keep_connection(@PQstatus(_conn)) then
+      _finish()
     end
+    if _open then
+      true
+    else
+      _connect()
+    end
+
+  fun ref _finish() =>
+    if not _open then
+      return
+    end
+    @PQfinish(_conn)
+    _conn = Pointer[_PGconn]
+    _open = false
+
+  fun ref _connect(): Bool =>
     _connect_count = _connect_count + 1
     _conn = @PQconnectdb(_dsn.cstring())
     if _conn.is_null() then
+      _open = false
       return false
     end
-    if @PQstatus(_conn) != _Pq.connection_ok() then
+    if not PqDecision.keep_connection(@PQstatus(_conn)) then
       @PQfinish(_conn)
       _conn = Pointer[_PGconn]
+      _open = false
       return false
     end
-    _ok = true
+    _open = true
     true
 
 primitive PqDsn
@@ -157,7 +237,7 @@ primitive PqDsn
     elseif rest.at("postgresql://", 0) then
       rest = rest.substring(13)
     else
-      return url + (if _contains(url, "sslmode=") then "" else " sslmode=disable" end)
+      return url + _libpq_tail(url)
     end
     var user: String val = "postgres"
     var pass: String val = "postgres"
@@ -193,7 +273,20 @@ primitive PqDsn
       end
     end
     "host=" + host + " port=" + port + " dbname=" + db + " user=" + user +
-      " password=" + pass + " sslmode=disable"
+      " password=" + pass + " sslmode=disable connect_timeout=2"
+
+  fun _libpq_tail(url: String val): String val =>
+    let ssl = _contains(url, "sslmode=")
+    let timeout = _contains(url, "connect_timeout=")
+    if (not ssl) and (not timeout) then
+      " sslmode=disable connect_timeout=2"
+    elseif (not ssl) and timeout then
+      " sslmode=disable"
+    elseif ssl and (not timeout) then
+      " connect_timeout=2"
+    else
+      ""
+    end
 
   fun _index_of(s: String val, ch: U8): USize ? =>
     var i: USize = 0

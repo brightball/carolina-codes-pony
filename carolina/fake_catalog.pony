@@ -71,6 +71,11 @@ class FakeCatalog is Catalog
       return _one(_year_sponsor_row())
     end
     if _contains(sql, "FROM v1_sponsors WHERE slug") then
+      try
+        if args(0)? == "flywheel" then
+          return _one(_sponsor_row())
+        end
+      end
       return recover val Array[Row val] end
     end
     if _contains(sql, "FROM v1_sponsors") then
@@ -105,6 +110,14 @@ class FakeCatalog is Catalog
         .> push(("year", "2026"))
         .> push(("languages", "{php}"))
         .> push(("topics", "{development}"))
+    end)
+
+  fun _sponsor_row(): Row val =>
+    Row(recover val
+      Array[(String val, String val)]
+        .> push(("slug", "flywheel"))
+        .> push(("name", "Flywheel"))
+        .> push(("website", "https://getflywheel.com"))
     end)
 
   fun _year_sponsor_row(): Row val =>

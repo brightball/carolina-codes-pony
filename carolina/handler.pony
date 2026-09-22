@@ -10,7 +10,15 @@ primitive Handler
   fun apply(path': String val, year_q: (String val | None), catalog: Catalog)
     : (U16, String val)
   =>
-    let path = _normalize(path')
+    try
+      _route(_normalize(path'), year_q, catalog)?
+    else
+      (500, JsonOut.unavailable())
+    end
+
+  fun _route(path: String val, year_q: (String val | None), catalog: Catalog)
+    : (U16, String val) ?
+  =>
     if path == "/health" then
       return (200, JsonOut.health())
     end
@@ -21,12 +29,12 @@ primitive Handler
       let rows =
         catalog.query(
           "SELECT year, slug, name, status FROM v1_years ORDER BY year DESC",
-          Sql.none_args())
+          Sql.none_args())?
       return (200, JsonOut.wrap_array(_to_values(rows)))
     end
     if path == "/v1/speakers" then
       let year = _year_opt(year_q)
-      return (200, JsonOut.wrap_array(CatalogFns.list_speakers(catalog, year)))
+      return (200, JsonOut.wrap_array(CatalogFns.list_speakers(catalog, year)?))
     end
     if path == "/v1/sponsors" then
       match _year_opt(year_q)
@@ -35,76 +43,83 @@ primitive Handler
           catalog.query(
             "SELECT " + Sql.year_sponsor_cols() +
             " FROM v1_year_sponsors WHERE year = $1 ORDER BY name",
-            Sql.one(y.string()))
+            Sql.one(y.string()))?
         return (200, JsonOut.wrap_array(_to_values(rows)))
       | None =>
         let rows =
           catalog.query(
             "SELECT " + Sql.sponsor_cols() + " FROM v1_sponsors ORDER BY name",
-            Sql.none_args())
+            Sql.none_args())?
         return (200, JsonOut.wrap_array(_to_values(rows)))
       end
     end
 
     let parts = _split(path)
-    if (parts.size() == 4) then
-      try
-        if (parts(0)? == "v1") and (parts(1)? == "speakers") then
-          let year = parts(2)?.i64()?
-          let slug = parts(3)?
-          return _speaker_year(catalog, year, slug)
-        end
-        if (parts(0)? == "v1") and (parts(1)? == "sponsors") then
-          let year = parts(2)?.i64()?
-          let slug = parts(3)?
-          return _sponsor_year(catalog, year, slug)
+    if parts.size() == 4 then
+      let head = _at(parts, 0)
+      let kind = _at(parts, 1)
+      if (head == "v1") and ((kind == "speakers") or (kind == "sponsors")) then
+        let year =
+          try
+            _at(parts, 2).i64()?
+          else
+            return (404, JsonOut.not_found())
+          end
+        let slug = _at(parts, 3)
+        if kind == "speakers" then
+          return _speaker_year(catalog, year, slug)?
+        else
+          return _sponsor_year(catalog, year, slug)?
         end
       end
     end
     if parts.size() == 3 then
-      try
-        if (parts(0)? == "v1") and (parts(1)? == "speakers") then
-          return _speaker(catalog, parts(2)?)
+      let head = _at(parts, 0)
+      let kind = _at(parts, 1)
+      let slug = _at(parts, 2)
+      if head == "v1" then
+        if kind == "speakers" then
+          return _speaker(catalog, slug)?
         end
-        if (parts(0)? == "v1") and (parts(1)? == "sponsors") then
-          return _sponsor(catalog, parts(2)?)
+        if kind == "sponsors" then
+          return _sponsor(catalog, slug)?
         end
       end
     end
     (404, JsonOut.not_found())
 
-  fun _speaker(catalog: Catalog, slug: String val): (U16, String val) =>
+  fun _speaker(catalog: Catalog, slug: String val): (U16, String val) ? =>
     match \exhaustive\ CatalogFns.query_one(
       catalog,
       "SELECT " + Sql.speaker_cols() + " FROM v1_speakers WHERE slug = $1",
-      Sql.one(slug))
+      Sql.one(slug))?
     | None => (404, JsonOut.not_found())
     | let speaker: Row val =>
       var obj = JsonOut.row_object(speaker)
-      let talks = CatalogFns.talks_for(catalog, slug, None)
+      let talks = CatalogFns.talks_for(catalog, slug, None)?
       var talks_json = json.JSONArray
       for t in talks.values() do
         talks_json = talks_json.push(JsonOut.row_object(t))
       end
       obj = obj.update("talks", talks_json)
-      obj = obj.update("years", JsonOut.i64_array(CatalogFns.talk_years(catalog, slug)))
+      obj = obj.update("years", JsonOut.i64_array(CatalogFns.talk_years(catalog, slug)?))
       (200, JsonOut.wrap_data(obj))
     end
 
   fun _speaker_year(catalog: Catalog, year: I64, slug: String val)
-    : (U16, String val)
+    : (U16, String val) ?
   =>
     match \exhaustive\ CatalogFns.query_one(
       catalog,
       "SELECT " + Sql.speaker_cols() + " FROM v1_speakers WHERE slug = $1",
-      Sql.one(slug))
+      Sql.one(slug))?
     | None => (404, JsonOut.not_found())
     | let speaker: Row val =>
-      let talks = CatalogFns.talks_for(catalog, slug, year)
+      let talks = CatalogFns.talks_for(catalog, slug, year)?
       if talks.size() == 0 then
         return (404, JsonOut.not_found())
       end
-      let years = CatalogFns.talk_years(catalog, slug)
+      let years = CatalogFns.talk_years(catalog, slug)?
       let other = recover iso Array[I64] end
       for y in years.values() do
         if y != year then other.push(y) end
@@ -129,18 +144,18 @@ primitive Handler
       (200, JsonOut.wrap_data(obj))
     end
 
-  fun _sponsor(catalog: Catalog, slug: String val): (U16, String val) =>
+  fun _sponsor(catalog: Catalog, slug: String val): (U16, String val) ? =>
     match \exhaustive\ CatalogFns.query_one(
       catalog,
       "SELECT " + Sql.sponsor_cols() + " FROM v1_sponsors WHERE slug = $1",
-      Sql.one(slug))
+      Sql.one(slug))?
     | None => (404, JsonOut.not_found())
     | let row: Row val =>
       var obj = JsonOut.row_object(row)
       let sps =
         catalog.query(
           "SELECT * FROM v1_sponsorships WHERE sponsor_slug = $1",
-          Sql.one(slug))
+          Sql.one(slug))?
       var arr = json.JSONArray
       for s in sps.values() do
         arr = arr.push(JsonOut.row_object(s))
@@ -150,16 +165,16 @@ primitive Handler
     end
 
   fun _sponsor_year(catalog: Catalog, year: I64, slug: String val)
-    : (U16, String val)
+    : (U16, String val) ?
   =>
     match \exhaustive\ CatalogFns.query_one(
       catalog,
       "SELECT " + Sql.year_sponsor_cols() +
       " FROM v1_year_sponsors WHERE year = $1 AND slug = $2",
-      Sql.two(year.string(), slug))
+      Sql.two(year.string(), slug))?
     | None => (404, JsonOut.not_found())
     | let row: Row val =>
-      let years = CatalogFns.sponsor_years(catalog, slug)
+      let years = CatalogFns.sponsor_years(catalog, slug)?
       let other = recover iso Array[I64] end
       for y in years.values() do
         if y != year then other.push(y) end
@@ -205,6 +220,13 @@ primitive Handler
       else
         path
       end
+    end
+
+  fun _at(parts: Array[String val] val, i: USize): String val =>
+    try
+      parts(i)?
+    else
+      ""
     end
 
   fun _split(path: String val): Array[String val] val =>

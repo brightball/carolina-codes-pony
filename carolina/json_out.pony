@@ -9,6 +9,9 @@ primitive JsonOut
   fun not_found(): String val =>
     json.JSONPrinter.print(json.JSONObject.update("error", "not_found"))
 
+  fun unavailable(): String val =>
+    json.JSONPrinter.print(json.JSONObject.update("error", "unavailable"))
+
   fun wrap_data(value: json.JSONValue): String val =>
     json.JSONPrinter.print(json.JSONObject.update("data", value))
 

@@ -11,3 +11,6 @@ actor Main
     let dsn = carolina.EnvUtil.database_url(env.vars)
     let auth = lori.TCPListenAuth(env.root)
     carolina.Listener(auth, host, port, dsn, env.out, env.err)
+
+  fun @runtime_override_defaults(rto: RuntimeOptions) =>
+    rto.ponymaxthreads = carolina.SchedCap.threads()

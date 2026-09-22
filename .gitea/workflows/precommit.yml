@@ -1,8 +1,16 @@
-# One Gitea Actions job per quality-gate check. Not a single combined job.
+# First-stage prepare job clones GITHUB_SHA and installs quality-gate tools
+# once, then exports that tree as a Gitea artifact. Check jobs restore it
+# and run only their command. They do not re-clone or re-install.
 #
-# Empty images: clone GITHUB_SHA with the job token over HTTPS.
-# Gitea git HTTP returns 401 without the token. Do not create a fresh
-# repo, force a default branch, or use the GitHub checkout action.
+# Empty runner image: clone GITHUB_SHA with the job token over HTTPS.
+# Gitea git HTTP returns 401 without the token. Do not initialize a new
+# repository or set a default-branch git config here. The five checks
+# need prepare only (not each other).
+#
+# Artifacts are uploaded with curl against Gitea's artifact API. The
+# ponyc:0.71.0 Alpine image has no Node (JS upload-artifact would fail)
+# and the job token cannot publish OCI packages. Prepare and the checks
+# share that image family so restored musl binaries run.
 name: precommit
 
 on:
@@ -16,8 +24,27 @@ concurrency:
 env:
   GITHUB_TOKEN: ${{ github.token }}
 
+# Shared restore step. Not a job. YAML anchor so check jobs do not each
+# re-clone or apk-add; they download the prepared-env artifact.
+x-restore-prepared-env: &restore-prepared-env
+  run: |
+    set -euo pipefail
+    token="${GITHUB_TOKEN:-${GITEA_TOKEN:-}}"
+    if [ -z "$token" ]; then echo "missing job token" >&2; exit 1; fi
+    out=/tmp/ci-env.sh
+    api="${GITHUB_SERVER_URL%/}/api/v1/repos/${GITHUB_REPOSITORY}/raw/scripts/ci-env.sh?ref=${GITHUB_SHA}"
+    if ! curl -fsSL -H "Authorization: token ${token}" "$api" -o "$out" || ! grep -q cmd_restore "$out"; then
+      host="${GITHUB_SERVER_URL#https://}"
+      host="${host#http://}"
+      scheme=https
+      case "${GITHUB_SERVER_URL}" in http://*) scheme=http ;; esac
+      curl -fsSL "${scheme}://x-access-token:${token}@${host}/${GITHUB_REPOSITORY}/raw/commit/${GITHUB_SHA}/scripts/ci-env.sh" -o "$out"
+    fi
+    grep -q cmd_restore "$out"
+    sh /tmp/ci-env.sh restore
+
 jobs:
-  test:
+  prepare:
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/ponylang/ponyc:0.71.0
@@ -25,7 +52,6 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ github.token }}
     steps:
-      - run: apk add --no-cache git openssl-dev libpq-dev ca-certificates make
       - run: |
           token="${GITHUB_TOKEN:-${GITEA_TOKEN:-}}"
           if [ -z "$token" ]; then echo "missing job token for git fetch" >&2; exit 1; fi
@@ -34,76 +60,22 @@ jobs:
           git clone --depth 1 --no-checkout "https://x-access-token:${token}@${host}/${GITHUB_REPOSITORY}" .
           git fetch --depth 1 origin "${GITHUB_SHA}"
           git checkout --force FETCH_HEAD
+      - run: sh scripts/ci-env.sh prepare
+
+  test:
+    needs: prepare
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/ponylang/ponyc:0.71.0
+      options: --user root
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - *restore-prepared-env
       - run: make test
 
   sast:
-    runs-on: ubuntu-latest
-    container:
-      image: docker.io/semgrep/semgrep:latest
-      env:
-        GITHUB_TOKEN: ${{ github.token }}
-    steps:
-      - run: |
-          if command -v apk >/dev/null 2>&1; then
-            apk add --no-cache git make
-          elif command -v apt-get >/dev/null 2>&1; then
-            apt-get update -qq && apt-get install -y --no-install-recommends git make ca-certificates
-          fi
-      - run: |
-          token="${GITHUB_TOKEN:-${GITEA_TOKEN:-}}"
-          if [ -z "$token" ]; then echo "missing job token for git fetch" >&2; exit 1; fi
-          host="${GITHUB_SERVER_URL#https://}"
-          host="${host#http://}"
-          git clone --depth 1 --no-checkout "https://x-access-token:${token}@${host}/${GITHUB_REPOSITORY}" .
-          git fetch --depth 1 origin "${GITHUB_SHA}"
-          git checkout --force FETCH_HEAD
-      - run: make sast
-
-  audit:
-    runs-on: ubuntu-latest
-    container:
-      image: docker.io/library/python:3.12-bookworm
-      env:
-        GITHUB_TOKEN: ${{ github.token }}
-    steps:
-      - run: apt-get update -qq && apt-get install -y --no-install-recommends git ca-certificates make curl
-      - run: |
-          curl -sSfL "https://github.com/google/osv-scanner/releases/download/v2.6.0/osv-scanner_linux_amd64" -o /usr/local/bin/osv-scanner
-          chmod +x /usr/local/bin/osv-scanner
-          osv-scanner --version
-      - run: |
-          token="${GITHUB_TOKEN:-${GITEA_TOKEN:-}}"
-          if [ -z "$token" ]; then echo "missing job token for git fetch" >&2; exit 1; fi
-          host="${GITHUB_SERVER_URL#https://}"
-          host="${host#http://}"
-          git clone --depth 1 --no-checkout "https://x-access-token:${token}@${host}/${GITHUB_REPOSITORY}" .
-          git fetch --depth 1 origin "${GITHUB_SHA}"
-          git checkout --force FETCH_HEAD
-      - run: make audit
-
-  gitleaks:
-    runs-on: ubuntu-latest
-    container:
-      image: docker.io/zricethezav/gitleaks:v8.30.1
-      options: --entrypoint /bin/sh --user root
-      env:
-        GITHUB_TOKEN: ${{ github.token }}
-    steps:
-      - run: |
-          if command -v apk >/dev/null 2>&1; then
-            apk add --no-cache git make bash
-          fi
-      - run: |
-          token="${GITHUB_TOKEN:-${GITEA_TOKEN:-}}"
-          if [ -z "$token" ]; then echo "missing job token for git fetch" >&2; exit 1; fi
-          host="${GITHUB_SERVER_URL#https://}"
-          host="${host#http://}"
-          git clone --depth 1 --no-checkout "https://x-access-token:${token}@${host}/${GITHUB_REPOSITORY}" .
-          git fetch --depth 1 origin "${GITHUB_SHA}"
-          git checkout --force FETCH_HEAD
-      - run: make gitleaks
-
-  pony-lint:
+    needs: prepare
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/ponylang/ponyc:0.71.0
@@ -111,13 +83,53 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ github.token }}
     steps:
-      - run: apk add --no-cache git openssl-dev libpq-dev ca-certificates make
-      - run: |
-          token="${GITHUB_TOKEN:-${GITEA_TOKEN:-}}"
-          if [ -z "$token" ]; then echo "missing job token for git fetch" >&2; exit 1; fi
-          host="${GITHUB_SERVER_URL#https://}"
-          host="${host#http://}"
-          git clone --depth 1 --no-checkout "https://x-access-token:${token}@${host}/${GITHUB_REPOSITORY}" .
-          git fetch --depth 1 origin "${GITHUB_SHA}"
-          git checkout --force FETCH_HEAD
+      - *restore-prepared-env
+      - run: make sast
+
+  audit:
+    needs: prepare
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/ponylang/ponyc:0.71.0
+      options: --user root
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - *restore-prepared-env
+      - run: make audit
+
+  gitleaks:
+    needs: prepare
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/ponylang/ponyc:0.71.0
+      options: --user root
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - *restore-prepared-env
+      - run: make gitleaks
+
+  pony-lint:
+    needs: prepare
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/ponylang/ponyc:0.71.0
+      options: --user root
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - *restore-prepared-env
       - run: make lint
+
+  smoke:
+    needs: prepare
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/ponylang/ponyc:0.71.0
+      options: --user root
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - *restore-prepared-env
+      - run: make smoke

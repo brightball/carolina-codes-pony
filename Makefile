@@ -12,7 +12,7 @@ OSV_SCANNER ?= osv-scanner
 GITLEAKS ?= gitleaks
 PONY_LINT ?= pony-lint
 
-.PHONY: all test run fetch clean sast audit gitleaks lint pony-lint check hooks
+.PHONY: all test run fetch clean sast audit gitleaks lint pony-lint smoke check hooks
 
 all: $(BIN_DIR)/pony
 
@@ -29,6 +29,7 @@ $(TEST_DIR)/test: fetch
 
 test: $(TEST_DIR)/test
 	$(TEST_DIR)/test
+	python3 test/test_ci_env.py
 
 run: $(BIN_DIR)/pony
 	$(BIN_DIR)/pony
@@ -52,8 +53,13 @@ lint: pony-lint
 pony-lint: fetch
 	$(CORRAL) run -- $(PONY_LINT) $(APP_PONY)
 
+# Non-debug binary, same OpenSSL define as the container, then / and /health.
+# Postgres and the CMS register URL are unreachable on purpose.
+smoke: $(BIN_DIR)/pony
+	python3 scripts/smoke.py $(BIN_DIR)/pony
+
 # Local convenience only. Gitea runs each target as its own job.
-check: test sast audit gitleaks lint
+check: test sast audit gitleaks lint smoke
 
 hooks:
 	pre-commit install
