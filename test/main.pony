@@ -45,6 +45,7 @@ actor \nodoc\ Main is TestList
     test(_TestPqConnectTimeout)
     test(_TestFlySuspend)
     test(_TestSchedulerCap)
+    test(_TestFlyDial)
 
 class iso _TestStructureIdentity is UnitTest
   fun name(): String => "carolina/structure/identity-primitive"
@@ -569,6 +570,141 @@ class iso _TestFlySuspend is UnitTest
     h.assert_true(_Has(body, "memory = \"256mb\""))
     h.assert_true(_Has(body, "cpu_kind = \"shared\""))
     h.assert_true(_Has(body, "cpus = 1"))
+
+class iso _TestFlyDial is UnitTest
+  """
+  Drives FlyDial, RegisterPlan, and Ipv6Literal — the functions the server
+  uses to choose an IPv6 target. No copy of that decision.
+  """
+  fun name(): String => "carolina/fly/ipv6-target"
+
+  fun apply(h: TestHelper) =>
+    h.assert_true(carolina.FlyDial.private_host("carolina-codes-db.flycast"))
+    h.assert_true(carolina.FlyDial.private_host("carolina-codes-db.internal"))
+    h.assert_true(carolina.FlyDial.private_host("db.fly.io"))
+    h.assert_false(carolina.FlyDial.private_host("127.0.0.1"))
+    h.assert_false(carolina.FlyDial.private_host("localhost"))
+    h.assert_false(carolina.FlyDial.private_host("carolina-codes-pony.fly.dev"))
+
+    let fly_url =
+      "postgres://u:p@carolina-codes-db.flycast:5432/carolina_codes"
+    let fly = carolina.FlyDial.pg(fly_url)
+    h.assert_true(fly.ipv6)
+    h.assert_eq[String]("carolina-codes-db.flycast", fly.host)
+    h.assert_eq[String]("5432", fly.port)
+    let internal = carolina.FlyDial.pg(
+      "postgres://u:p@carolina-codes-db.internal:5432/carolina_codes")
+    h.assert_true(internal.ipv6)
+    h.assert_eq[String]("carolina-codes-db.internal", internal.host)
+    let fly_io = carolina.FlyDial.pg(
+      "postgres://u:p@db.fly.io:5432/carolina_codes")
+    h.assert_true(fly_io.ipv6)
+    h.assert_eq[String]("db.fly.io", fly_io.host)
+    let keyword = carolina.FlyDial.pg(
+      "host=carolina-codes-db.flycast port=5432 dbname=carolina_codes user=u password=p")
+    h.assert_true(keyword.ipv6)
+    h.assert_eq[String]("carolina-codes-db.flycast", keyword.host)
+
+    let local_url = "postgres://postgres:postgres@127.0.0.1:5432/carolina_dev"
+    let local = carolina.FlyDial.pg(local_url)
+    h.assert_false(local.ipv6)
+    h.assert_eq[String]("127.0.0.1", local.host)
+    h.assert_eq[String]("5432", local.port)
+    let local_dsn = carolina.PqDsn(local_url)
+    match carolina.FlyDial.conninfo(local_dsn, local, None)
+    | let same: String =>
+      h.assert_eq[String](local_dsn, same)
+    | None =>
+      h.fail("non-fly conninfo must stay unchanged")
+    end
+
+    let fly_dsn = carolina.PqDsn(fly_url)
+    let missing =
+      match carolina.FlyDial.conninfo(fly_dsn, fly, None)
+      | None => true
+      | let _: String => false
+      end
+    h.assert_true(missing, "fly host with no address is not an empty success")
+    match carolina.FlyDial.conninfo(fly_dsn, fly, "fdaa::1")
+    | let dial: String =>
+      h.assert_true(_Has(dial, "host=carolina-codes-db.flycast"))
+      h.assert_true(_Has(dial, "hostaddr=fdaa::1"))
+    | None =>
+      h.fail("resolved fly host must set hostaddr")
+    end
+
+    let cms = carolina.FlyDial.http("http://carolina-codes.internal:8080")
+    h.assert_true(cms.ipv6)
+    h.assert_eq[String]("carolina-codes.internal", cms.host)
+    h.assert_eq[String]("8080", cms.port)
+    let cms_local = carolina.FlyDial.http("http://127.0.0.1:4000")
+    h.assert_false(cms_local.ipv6)
+    h.assert_eq[String]("127.0.0.1", cms_local.host)
+    h.assert_eq[String]("4000", cms_local.port)
+
+    let planned =
+      match carolina.RegisterPlan("http://carolina-codes.internal:8080", "dev")
+      | let spec: carolina.DialTarget =>
+        h.assert_true(spec.ipv6)
+        h.assert_eq[String]("carolina-codes.internal", spec.host)
+        h.assert_eq[String]("8080", spec.port)
+        true
+      | None =>
+        false
+      end
+    h.assert_true(planned, "cms register target should dial over IPv6")
+    let no_url =
+      match carolina.RegisterPlan("", "dev")
+      | None => true
+      | let _: carolina.DialTarget => false
+      end
+    h.assert_true(no_url, "empty url is a no-op")
+    let no_token =
+      match carolina.RegisterPlan("http://carolina-codes.internal:8080", "")
+      | None => true
+      | let _: carolina.DialTarget => false
+      end
+    h.assert_true(no_token, "empty token is a no-op")
+
+    try
+      let lit = carolina.Ipv6Literal("::1", "9")?
+      h.assert_true(_Has(lit, ":"), "lookup of ::1 was " + lit)
+    else
+      h.fail("::1 did not resolve as IPv6")
+    end
+    let unresolved =
+      try
+        carolina.Ipv6Literal("no-such.invalid", "9")?
+        false
+      else
+        true
+      end
+    h.assert_true(unresolved, "a failed lookup must not invent an address")
+
+    let cat = carolina.PqCatalog(
+      "postgres://u:p@carolina-codes-db.flycast:5432/carolina_codes")
+    (let health, let health_body) = carolina.Handler("/health", None, cat)
+    h.assert_eq[U16](200, health)
+    h.assert_true(_Has(health_body, "\"ok\""))
+    h.assert_eq[USize](0, cat.sql_count())
+    h.assert_eq[USize](0, cat.connect_count())
+    (let status, let body) = carolina.Handler("/v1/years", None, cat)
+    h.assert_eq[U16](500, status)
+    h.assert_true(_Has(body, "unavailable"))
+    h.assert_false(_Has(body, "\"data\""))
+    h.assert_true(cat.connect_count() > 0)
+    h.assert_true(cat.sql_count() > 0)
+
+    let pg = _RepoFile(h, "carolina/postgres.pony")
+    h.assert_true(_Has(pg, "FlyDial.conninfo"))
+    h.assert_true(_Has(pg, "Ipv6Literal"))
+    let reg = _RepoFile(h, "carolina/register.pony")
+    h.assert_true(_Has(reg, "RegisterPlan"))
+    h.assert_true(_Has(reg, "lori.IP6"))
+    let srv = _RepoFile(h, "carolina/server.pony")
+    h.assert_true(_Has(srv, "Listen6.bind"))
+    let listen = _RepoFile(h, "carolina/listen6.pony")
+    h.assert_true(_Has(listen, "ipv6_v6only"))
 
 class iso _TestSchedulerCap is UnitTest
   fun name(): String => "carolina/runtime/scheduler-cap"

@@ -7,14 +7,20 @@
 use stallion = "stallion"
 use uri = "uri"
 use lori = "lori"
+use @pony_asio_event_create[AsioEventID](owner: AsioEventNotify, fd: U32,
+  flags: U32, nsec: U64, noisy: Bool)
+use @pony_os_accept[I32](event: AsioEventID)
 
-actor Listener is lori.TCPListenerActor
-  var _tcp_listener: lori.TCPListener = lori.TCPListener.none()
+actor Listener is AsioEventNotify
   let _out: OutStream
   let _err: OutStream
   let _config: stallion.ServerConfig
   let _server_auth: lori.TCPServerAuth
   let _dsn: String val
+  let _port: String
+  var _fd: U32 = 0
+  var _bound: Bool = false
+  var _event: AsioEventID = AsioEvent.none()
 
   new create(
     auth: lori.TCPListenAuth,
@@ -27,26 +33,50 @@ actor Listener is lori.TCPListenerActor
     _out = out
     _err = err
     _dsn = dsn
+    _port = port
     _server_auth = lori.TCPServerAuth(auth)
     _config = stallion.ServerConfig(host, port)
-    _tcp_listener = lori.TCPListener(auth, host, port, this)
-
-  fun ref _listener(): lori.TCPListener =>
-    _tcp_listener
-
-  fun ref _on_accept(fd: U32): lori.TCPConnectionActor =>
-    PolyglotServer(_server_auth, fd, _config, _dsn)
-
-  fun ref _on_listening() =>
+    // Bind before returning so a later register lookup cannot sit in front
+    // of the listening socket. Arming is synchronous for the same reason:
+    // the constructor runs before RegisterOnce.
     try
-      (let host, let port) = _tcp_listener.local_address().name()?
-      _out.print("carolina-codes-pony listening on " + host + ":" + port)
+      _fd = Listen6.bind(port)?
+      _bound = true
+      _event = @pony_asio_event_create(this, _fd, AsioEvent.read(), 0, true)
+      if _event.is_null() then
+        _bound = false
+        _err.print("Failed to bind Stallion listener")
+      else
+        _out.print("carolina-codes-pony listening on [::]:" + port)
+      end
     else
-      _out.print("carolina-codes-pony listening")
+      _err.print("Failed to bind Stallion listener")
     end
 
-  fun ref _on_listen_failure() =>
-    _err.print("Failed to bind Stallion listener")
+  be _event_notify(event: AsioEventID, flags: U32, arg: U32) =>
+    if (not _bound) or (event isnt _event) then
+      return
+    end
+    // `arg` is part of AsioEventNotify. The readiness backend does not use it.
+    if AsioEvent.errored(flags) then
+      _err.print("listener error " + arg.string())
+      return
+    end
+    if AsioEvent.readable(flags) then
+      _accept()
+    end
+
+  fun ref _accept() =>
+    if not _bound then
+      return
+    end
+    while true do
+      let fd = @pony_os_accept(_event)
+      if fd <= 0 then
+        return
+      end
+      PolyglotServer(_server_auth, fd.u32(), _config, _dsn)
+    end
 
 actor PolyglotServer is stallion.HTTPServerActor
   var _http: stallion.HTTPServer = stallion.HTTPServer.none()

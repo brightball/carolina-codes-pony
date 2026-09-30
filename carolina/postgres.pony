@@ -5,6 +5,11 @@
 // this type; they use `FakeCatalog`.
 
 use "lib:pq"
+use net = "net"
+use @pony_os_addrinfo[Pointer[U8]](family: U32, host: Pointer[U8] tag,
+  service: Pointer[U8] tag)
+use @pony_os_getaddr[None](addr: Pointer[None] tag, ipaddr: net.NetAddress tag)
+use @freeaddrinfo[None](addr: Pointer[None] tag)
 
 use @PQconnectdb[Pointer[_PGconn]](conninfo: Pointer[U8] tag)
 use @PQstatus[I32](conn: Pointer[_PGconn] tag)
@@ -120,15 +125,37 @@ primitive PqRead
     end
     consume out
 
+primitive Ipv6Literal
+  """
+  Numeric IPv6 address for `host`, looked up with AF_INET6 only.
+  An empty result is an error. This is not used on the `/health` path.
+  """
+  fun apply(host: String, service: String): String val ? =>
+    let result = @pony_os_addrinfo(U32(2), host.cstring(), service.cstring())
+    if result.is_null() then
+      error
+    end
+    let ip = recover net.NetAddress end
+    @pony_os_getaddr(result, ip)
+    @freeaddrinfo(result)
+    if not ip.ip6() then
+      error
+    end
+    (let name, let _) = ip.name()?
+    if name.size() == 0 then
+      error
+    end
+    name
+
 class PqCatalog is Catalog
-  let _dsn: String val
+  let _url: String val
   var _conn: Pointer[_PGconn] = Pointer[_PGconn]
   var _sql_count: USize = 0
   var _connect_count: USize = 0
   var _open: Bool = false
 
   new create(database_url: String val) =>
-    _dsn = PqDsn(database_url)
+    _url = database_url
 
   fun sql_count(): USize =>
     _sql_count
@@ -212,7 +239,24 @@ class PqCatalog is Catalog
 
   fun ref _connect(): Bool =>
     _connect_count = _connect_count + 1
-    _conn = @PQconnectdb(_dsn.cstring())
+    let spec = FlyDial.pg(_url)
+    let base = PqDsn(_url)
+    let hostaddr: (String val | None) =
+      if spec.ipv6 then
+        try
+          Ipv6Literal(spec.host, spec.port)?
+        else
+          None
+        end
+      else
+        None
+      end
+    let info =
+      match FlyDial.conninfo(base, spec, hostaddr)
+      | let s: String => s
+      | None => return false
+      end
+    _conn = @PQconnectdb(info.cstring())
     if _conn.is_null() then
       _open = false
       return false

@@ -3,6 +3,10 @@
 
 Postgres and the CMS are pointed at a closed port. The binary caps its own
 scheduler threads; this script does not pass --ponymaxthreads.
+
+The listen socket must be the IPv6 unspecified address, and a 127.0.0.1
+client must still receive /health. After the process has been idle for more
+than one second, /health and / must answer again in under one second.
 """
 
 from __future__ import annotations
@@ -37,14 +41,31 @@ def fetch(host: str, port: int, path: str, timeout: float) -> tuple[int, dict[st
         conn.close()
 
 
-def fetch_first(port: int, path: str, timeout: float) -> tuple[int, dict[str, str], str]:
-    errors: list[str] = []
-    for host in ("127.0.0.1", "::1"):
+def tcp6_listeners(pid: int, port: int) -> list[str]:
+    """IPv6 local addresses (32 hex chars) this process is listening on."""
+    hex_port = f"{port:04X}"
+    inodes: set[str] = set()
+    for entry in Path(f"/proc/{pid}/fd").iterdir():
         try:
-            return fetch(host, port, path, timeout)
-        except OSError as exc:
-            errors.append(f"{host}:{port}{path}: {exc}")
-    raise OSError("; ".join(errors))
+            target = os.readlink(entry)
+        except OSError:
+            continue
+        if target.startswith("socket:[") and target.endswith("]"):
+            inodes.add(target[len("socket:[") : -1])
+    found: list[str] = []
+    lines = Path("/proc/net/tcp6").read_text(encoding="utf-8").splitlines()
+    for line in lines[1:]:
+        parts = line.split()
+        if len(parts) < 10:
+            continue
+        local, inode = parts[1], parts[9]
+        if inode not in inodes:
+            continue
+        addr, local_port = local.split(":")
+        if local_port.upper() != hex_port:
+            continue
+        found.append(addr.upper())
+    return found
 
 
 def thread_count(pid: int) -> int:
@@ -86,7 +107,7 @@ def main() -> None:
                     + log_path.read_text(encoding="utf-8")
                 )
             try:
-                health = fetch_first(port, "/health", 0.4)
+                health = fetch("127.0.0.1", port, "/health", 0.4)
                 break
             except OSError:
                 time.sleep(0.05)
@@ -104,7 +125,18 @@ def main() -> None:
         if parsed.get("status") != "ok":
             raise SystemExit(f"/health JSON status is {parsed.get('status')!r}")
 
-        ident_status, ident_headers, ident_body = fetch_first(port, "/", 2.0)
+        listeners = tcp6_listeners(proc.pid, port)
+        print("listen_tcp6=" + ",".join(listeners))
+        unspecified = "00000000000000000000000000000000"
+        loopback = "00000000000000000000000000000001"
+        if unspecified not in listeners:
+            raise SystemExit(
+                f"listen socket is not IPv6 unspecified: {listeners}"
+            )
+        if listeners == [loopback]:
+            raise SystemExit("listen socket is ::1 only")
+
+        ident_status, ident_headers, ident_body = fetch("127.0.0.1", port, "/", 2.0)
         print(f"root_status={ident_status}")
         print(f"root_body={ident_body}")
         print("root_headers=" + " ".join(f"{k}:{v}" for k, v in ident_headers.items()))
@@ -130,6 +162,34 @@ def main() -> None:
             )
         if elapsed >= 3.0:
             raise SystemExit(f"/health took {elapsed:.3f}s")
+
+        time.sleep(1.1)
+        idle_at = time.monotonic()
+        idle_status, _, idle_body = fetch("127.0.0.1", port, "/health", 2.0)
+        idle_elapsed = time.monotonic() - idle_at
+        print(f"idle_health_status={idle_status}")
+        print(f"idle_health_elapsed_s={idle_elapsed:.3f}")
+        print(f"idle_health_body={idle_body}")
+        if idle_status != 200:
+            raise SystemExit(f"idle /health status {idle_status}")
+        if json.loads(idle_body).get("status") != "ok":
+            raise SystemExit(f"idle /health body is {idle_body}")
+        if idle_elapsed >= 1.0:
+            raise SystemExit(f"idle /health took {idle_elapsed:.3f}s")
+
+        root_at = time.monotonic()
+        root_status, _, root_body = fetch("127.0.0.1", port, "/", 2.0)
+        root_elapsed = time.monotonic() - root_at
+        print(f"idle_root_status={root_status}")
+        print(f"idle_root_elapsed_s={root_elapsed:.3f}")
+        print(f"idle_root_body={root_body}")
+        if root_status != 200:
+            raise SystemExit(f"idle / status {root_status}")
+        root_ident = json.loads(root_body)
+        if root_ident.get("language") != "Pony" or root_ident.get("framework") != "Stallion":
+            raise SystemExit(f"idle / identity JSON is {root_body}")
+        if root_elapsed >= 1.0:
+            raise SystemExit(f"idle / took {root_elapsed:.3f}s")
     finally:
         if proc.poll() is None:
             proc.terminate()

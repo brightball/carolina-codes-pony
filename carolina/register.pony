@@ -8,21 +8,51 @@ use lori = "lori"
 
 actor Registrar is (lori.TCPConnectionActor & lori.ClientLifecycleEventReceiver)
   var _tcp: lori.TCPConnection = lori.TCPConnection.none()
+  let _auth: lori.TCPConnectAuth
+  let _spec: DialTarget
   let _err: OutStream
   let _request: String val
   var _buf: String val = ""
   var _logged: Bool = false
+  var _started: Bool = false
 
   new create(
     auth: lori.TCPConnectAuth,
-    host: String val,
-    port: String val,
+    spec: DialTarget,
     request: String val,
     err: OutStream)
   =>
+    _auth = auth
+    _spec = spec
     _err = err
     _request = request
-    _tcp = lori.TCPConnection.client(auth, host, port, "", this, this)
+    // Dial from a later turn so Main can finish arming the listener first.
+    _dial()
+
+  be _dial() =>
+    if _started then
+      return
+    end
+    _started = true
+    _tcp =
+      if _spec.ipv6 then
+        lori.TCPConnection.client(
+          _auth,
+          _spec.host,
+          _spec.port,
+          "",
+          this,
+          this
+          where ip_version = lori.IP6)
+      else
+        lori.TCPConnection.client(
+          _auth,
+          _spec.host,
+          _spec.port,
+          "",
+          this,
+          this)
+      end
 
   fun ref _connection(): lori.TCPConnection =>
     _tcp
@@ -55,20 +85,33 @@ actor Registrar is (lori.TCPConnectionActor & lori.ClientLifecycleEventReceiver)
     end
     s
 
+primitive RegisterPlan
+  """
+  No-op when the CMS URL or the bearer token is empty. Otherwise the
+  dial target for that URL, IPv6 when the host is Fly 6PN.
+  """
+  fun apply(url: String val, token: String val): (DialTarget | None) =>
+    if (url.size() == 0) or (token.size() == 0) then
+      None
+    else
+      FlyDial.http(url)
+    end
+
 primitive RegisterOnce
   fun apply(env: Env) =>
     let url = EnvUtil.carolina_url(env.vars)
     let token = EnvUtil.register_token(env.vars)
-    if (url.size() == 0) or (token.size() == 0) then
-      return
+    match RegisterPlan(url, token)
+    | let spec: DialTarget =>
+      let body: String val =
+        json.JSONPrinter.print(
+          Identity.json_object().update(
+            "base_url", EnvUtil.public_base_url(env.vars)))
+      let req = _http_post(spec.host, token, body)
+      Registrar(lori.TCPConnectAuth(env.root), spec, req, env.err)
+    | None =>
+      None
     end
-    (let host, let port) = _host_port(url)
-    let body: String val =
-      json.JSONPrinter.print(
-        Identity.json_object().update(
-          "base_url", EnvUtil.public_base_url(env.vars)))
-    let req = _http_post(host, token, body)
-    Registrar(lori.TCPConnectAuth(env.root), host, port, req, env.err)
 
   fun _http_post(host: String val, token: String val, body: String val)
     : String val
@@ -84,30 +127,3 @@ primitive RegisterOnce
         .> append(body)
     end
 
-  fun _host_port(url: String val): (String val, String val) =>
-    var rest: String val = url
-    if rest.at("http://", 0) then
-      rest = rest.substring(7)
-    elseif rest.at("https://", 0) then
-      rest = rest.substring(8)
-    end
-    try
-      let slash = _idx(rest, '/')?
-      rest = rest.substring(0, slash.isize())
-    end
-    try
-      let colon = _idx(rest, ':')?
-      (rest.substring(0, colon.isize()), rest.substring((colon + 1).isize()))
-    else
-      (rest, "80")
-    end
-
-  fun _idx(s: String val, ch: U8): USize ? =>
-    var i: USize = 0
-    while i < s.size() do
-      if s(i)? == ch then
-        return i
-      end
-      i = i + 1
-    end
-    error
