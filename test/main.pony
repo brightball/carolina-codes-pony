@@ -46,6 +46,7 @@ actor \nodoc\ Main is TestList
     test(_TestFlySuspend)
     test(_TestSchedulerCap)
     test(_TestFlyDial)
+    test(_TestAgentDocs)
 
 class iso _TestStructureIdentity is UnitTest
   fun name(): String => "carolina/structure/identity-primitive"
@@ -816,6 +817,29 @@ primitive _IsJobHeaderLine
       i = i + 1
     end
     true
+
+class iso _TestAgentDocs is UnitTest
+  """
+  README names the Stallion pin and the image compiler. AGENTS.md sends
+  the reader to the decision ledger before those areas change.
+  """
+  fun name(): String => "carolina/docs/agents-and-readme"
+
+  fun apply(h: TestHelper) =>
+    let readme = _RepoFile(h, "README.md")
+    let agents = _RepoFile(h, "AGENTS.md")
+    h.assert_true(
+      _Has(readme, "Stallion 0.11.0"),
+      "README must name Stallion 0.11.0")
+    h.assert_true(
+      _Has(readme, "0.71.0"),
+      "README must name the image compiler 0.71.0")
+    h.assert_true(
+      _Has(agents, "decision ledger"),
+      "AGENTS.md must tell the reader to consult the decision ledger")
+    h.assert_true(
+      _Has(agents, "DECISIONS.md"),
+      "AGENTS.md must point at DECISIONS.md")
 
 primitive _RepoFile
   fun apply(h: TestHelper, rel: String val): String val =>
